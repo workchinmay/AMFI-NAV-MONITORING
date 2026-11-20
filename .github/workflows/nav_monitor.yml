@@ -1,0 +1,70 @@
+name: AMFI NAV Monitoring System
+
+on:
+  workflow_dispatch:
+    inputs:
+      override_date:
+        description: "Optional NAV date override (DD-MMM-YYYY, e.g. 19-Nov-2026)"
+        required: false
+        default: ""
+      tag:
+        description: "Snapshot tag (e.g. test_1730)"
+        required: false
+        default: "manual_test"
+
+  schedule:
+    # IST = UTC + 5:30 | Dates: 20-23 Nov 2026
+    - cron: "15 1 20-23 11 *"
+    - cron: "30 1 20-23 11 *"
+    - cron: "0 2 20-23 11 *"
+    - cron: "30 2 20-23 11 *"
+    - cron: "0 3 20-23 11 *"
+    - cron: "30 3 20-23 11 *"
+    - cron: "0 4 20-23 11 *"
+    - cron: "30 4 20-23 11 *"
+    - cron: "0 5 20-23 11 *"
+    - cron: "30 5 20-23 11 *"
+    - cron: "0 6 20-23 11 *"
+    - cron: "30 6 20-23 11 *"
+    - cron: "0 7 20-23 11 *"
+    - cron: "30 7 20-23 11 *"
+    - cron: "30 17 20-23 11 *"
+
+permissions:
+  contents: write
+
+jobs:
+  capture-and-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Capture AMFI NAV Snapshot
+        run: |
+          if [ -n "${{ github.event.inputs.override_date }}" ]; then
+            python src/fetch_snapshot.py --override-date "${{ github.event.inputs.override_date }}" --tag "${{ github.event.inputs.tag }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python src/fetch_snapshot.py --tag "${{ github.event.inputs.tag }}"
+          else
+            python src/fetch_snapshot.py --tag "scheduled"
+          fi
+
+      - name: Generate Summary Report
+        run: python src/generate_reports.py
+
+      - name: Commit and push snapshots & reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ reports/
+          git diff --staged --quiet || git commit -m "chore: capture AMFI NAV snapshot [$(date -u +'%Y-%m-%d %H:%M UTC')]"
+          git push
