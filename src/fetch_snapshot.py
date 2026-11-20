@@ -1,6 +1,5 @@
 import argparse
 import csv
-import gzip
 import hashlib
 import os
 import time
@@ -117,9 +116,10 @@ def main():
     response_size = len(raw_bytes)
     http_status = resp.status_code
 
-    raw_filename = f"{RAW_DIR}/{file_stamp}_{args.tag}.txt.gz"
-    with gzip.open(raw_filename, "wb") as gz:
-        gz.write(raw_bytes)
+    # Save exact raw AMFI response as plain .txt
+    raw_filename = f"{RAW_DIR}/{file_stamp}_{args.tag}.txt"
+    with open(raw_filename, "wb") as f:
+        f.write(raw_bytes)
 
     parsed_rows = parse_amfi_text(raw_text, capture_ts_str, requested_nav_date)
     parsed_filename = f"{PARSED_DIR}/{file_stamp}_{args.tag}.csv"
@@ -163,8 +163,7 @@ def main():
         })
 
     print(f"[{capture_ts_str}] Captured {len(parsed_rows)} schemes.")
-    print(f"Requested NAV Date: {requested_nav_date} | Exact Date Matches: {matching_date_count}")
-    print(f"SHA-256: {sha256_hash}")
+    print(f"Saved plain raw text to: {raw_filename}")
 
 
 if __name__ == "__main__":
