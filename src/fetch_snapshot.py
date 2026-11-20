@@ -8,7 +8,7 @@ import pytz
 import requests
 
 IST = pytz.timezone("Asia/Kolkata")
-AMFI_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
+AMFI_HISTORY_URL = "https://portal.amfiindia.com/DownloadNAVHistoryReport_Po.aspx"
 
 RAW_DIR = "data/raw"
 PARSED_DIR = "data/parsed"
@@ -27,7 +27,8 @@ def get_target_nav_date(now_ist: datetime, override_date: str | None = None) -> 
     return target.strftime("%d-%b-%Y")
 
 
-def fetch_with_retries(url: str, retries: int = 3) -> requests.Response:
+def fetch_amfi_by_date(target_date: str, retries: int = 3) -> tuple[requests.Response, str]:
+    url = f"{AMFI_HISTORY_URL}?frmdt={target_date}&todt={target_date}"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,9 +38,9 @@ def fetch_with_retries(url: str, retries: int = 3) -> requests.Response:
     }
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(url, headers=headers, timeout=45)
+            resp = requests.get(url, headers=headers, timeout=60)
             resp.raise_for_status()
-            return resp
+            return resp, url
         except Exception:
             if attempt == retries:
                 raise
@@ -47,7 +48,7 @@ def fetch_with_retries(url: str, retries: int = 3) -> requests.Response:
     raise RuntimeError("Unreachable")
 
 
-def parse_amfi_text(raw_text: str, capture_ts_ist: str, requested_date: str) -> list[dict]:
+def parse_history_text(raw_text: str, capture_ts_ist: str, requested_date: str) -> list[dict]:
     rows = []
     current_category = "Unknown"
     current_amc = "Unknown"
@@ -68,11 +69,13 @@ def parse_amfi_text(raw_text: str, capture_ts_ist: str, requested_date: str) -> 
         if parts[0].lower() == "scheme code":
             continue
 
+        # DownloadNAVHistoryReport_Po.aspx format:
+        # 0: Scheme Code | 1: Scheme Name | 2: ISIN Growth | 3: ISIN Reinv
+        # 4: Net Asset Value | 5: Repurchase Price | 6: Sale Price | 7: Date
         if len(parts) >= 8:
-            scheme_code, isin_growth, isin_reinv, scheme_name, plan, option, nav_val, nav_date = parts[:8]
+            scheme_code, scheme_name, isin_growth, isin_reinv, nav_val, _, _, nav_date = parts[:8]
         elif len(parts) >= 6:
             scheme_code, isin_growth, isin_reinv, scheme_name, nav_val, nav_date = parts[:6]
-            plan, option = "", ""
         else:
             continue
 
@@ -85,8 +88,6 @@ def parse_amfi_text(raw_text: str, capture_ts_ist: str, requested_date: str) -> 
             "amc": current_amc,
             "category": current_category,
             "scheme_name": scheme_name,
-            "plan": plan,
-            "option": option,
             "nav": nav_val,
             "returned_nav_date": nav_date,
             "is_requested_date_match": str(nav_date.lower() == requested_date.lower()),
@@ -95,7 +96,7 @@ def parse_amfi_text(raw_text: str, capture_ts_ist: str, requested_date: str) -> 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch and log AMFI NAV snapshot.")
+    parser = argparse.ArgumentParser(description="Fetch AMFI Historical NAV snapshot by date.")
     parser.add_argument("--override-date", type=str, default=None)
     parser.add_argument("--tag", type=str, default="scheduled")
     args = parser.parse_args()
@@ -108,7 +109,7 @@ def main():
     file_stamp = now_ist.strftime("%Y-%m-%d_%H%M")
     requested_nav_date = get_target_nav_date(now_ist, args.override_date)
 
-    resp = fetch_with_retries(AMFI_URL)
+    resp, queried_url = fetch_amfi_by_date(requested_nav_date)
     raw_bytes = resp.content
     raw_text = resp.text
 
@@ -117,12 +118,12 @@ def main():
     http_status = resp.status_code
 
     # Save exact raw AMFI response as plain .txt
-    raw_filename = f"{RAW_DIR}/{file_stamp}_{args.tag}.txt"
+    raw_filename = f"{RAW_DIR}/{file_stamp}_{requested_nav_date}_{args.tag}.txt"
     with open(raw_filename, "wb") as f:
         f.write(raw_bytes)
 
-    parsed_rows = parse_amfi_text(raw_text, capture_ts_str, requested_nav_date)
-    parsed_filename = f"{PARSED_DIR}/{file_stamp}_{args.tag}.csv"
+    parsed_rows = parse_history_text(raw_text, capture_ts_str, requested_nav_date)
+    parsed_filename = f"{PARSED_DIR}/{file_stamp}_{requested_nav_date}_{args.tag}.csv"
 
     if parsed_rows:
         with open(parsed_filename, "w", newline="", encoding="utf-8") as f:
@@ -138,6 +139,7 @@ def main():
             "capture_time_ist",
             "tag",
             "requested_nav_date",
+            "queried_url",
             "http_status",
             "response_size_bytes",
             "sha256",
@@ -153,6 +155,7 @@ def main():
             "capture_time_ist": capture_ts_str,
             "tag": args.tag,
             "requested_nav_date": requested_nav_date,
+            "queried_url": queried_url,
             "http_status": http_status,
             "response_size_bytes": response_size,
             "sha256": sha256_hash,
@@ -162,8 +165,9 @@ def main():
             "parsed_file": parsed_filename,
         })
 
-    print(f"[{capture_ts_str}] Captured {len(parsed_rows)} schemes.")
-    print(f"Saved plain raw text to: {raw_filename}")
+    print(f"[{capture_ts_str}] URL: {queried_url}")
+    print(f"Total Schemes Returned for {requested_nav_date}: {len(parsed_rows)}")
+    print(f"Saved raw text to: {raw_filename}")
 
 
 if __name__ == "__main__":
