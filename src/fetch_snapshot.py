@@ -18,11 +18,11 @@ METADATA_LOG = "data/snapshot_metadata.csv"
 def get_target_nav_date(now_ist: datetime, override_date: str | None = None) -> str:
     if override_date:
         return override_date
-    # 6:45 AM to 1:00 PM IST -> previous calendar day
-    if now_ist.hour < 14:
+    # Before 3:00 PM IST (covers 6:45 AM to 1:00 PM slots) -> fetch T-1 NAV
+    # After 3:00 PM IST (covers 11:00 PM slot) -> fetch T NAV
+    if now_ist.hour < 15:
         target = now_ist - timedelta(days=1)
     else:
-        # 11:00 PM IST -> same calendar day
         target = now_ist
     return target.strftime("%d-%b-%Y")
 
